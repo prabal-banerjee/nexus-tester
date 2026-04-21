@@ -2,6 +2,7 @@ import base64
 import getpass
 import html
 import json
+import uuid
 import mimetypes
 import os
 import re
@@ -30,6 +31,9 @@ JSON_REPORT_PATH = REPORT_BUNDLE_DIR / "report.json"
 MD_REPORT_PATH = REPORT_BUNDLE_DIR / "report.md"
 HTML_REPORT_PATH = REPORT_BUNDLE_DIR / "index.html"
 EXPECTATIONS_HTML_PATH = REPORT_BUNDLE_DIR / "expectations.html"
+DEBUG_LOG_PATH = WORKSPACE / ".cursor" / "debug-438514.log"
+DEBUG_SESSION_ID = "438514"
+DEBUG_SERVER_ENDPOINT = "http://127.0.0.1:7773/ingest/f57d7c58-cc74-44ea-be5e-8d0392b6ae15"
 
 DESTINATION_SLUG = os.environ.get("FASTBRIDGE_DEST_SLUG", "base").strip().strip("/")
 BASE_URL = f"https://fastbridge.availproject.org/{DESTINATION_SLUG}/"
@@ -302,6 +306,24 @@ def extract_numeric_amount(value: Optional[str]) -> Optional[float]:
     return float(match.group(1)) if match else None
 
 
+def debug_log(run_id: str, hypothesis_id: str, location: str, message: str, data: Dict[str, Any]) -> None:
+    payload = {
+        "sessionId": DEBUG_SESSION_ID,
+        "id": f"log_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}",
+        "runId": run_id,
+        "hypothesisId": hypothesis_id,
+        "location": location,
+        "message": message,
+        "data": data,
+        "timestamp": int(time.time() * 1000),
+    }
+    try:
+        with DEBUG_LOG_PATH.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(payload, separators=(",", ":")) + "\n")
+    except Exception:
+        pass
+
+
 class WalletHarness:
     def __init__(self, address: str, private_key: str, provider_calls: List[Dict[str, Any]], tx_log: List[Dict[str, Any]]):
         self.address = Web3.to_checksum_address(address)
@@ -322,17 +344,81 @@ class WalletHarness:
         return self.current_client().provider.make_request(method, params)["result"]
 
     def sign_message(self, message_hex: str) -> str:
+        # region agent log
+        debug_log(
+            RUN_ID,
+            "H3",
+            "ui_fastbridge_connect_test.py:sign_message",
+            "personal_sign payload shape",
+            {
+                "has0x": isinstance(message_hex, str) and message_hex.startswith("0x"),
+                "length": len(message_hex) if isinstance(message_hex, str) else None,
+                "type": type(message_hex).__name__,
+            },
+        )
+        # endregion
         if message_hex.startswith("0x"):
             message_bytes = bytes.fromhex(message_hex[2:])
         else:
             message_bytes = message_hex.encode()
         signed = Account.sign_message(encode_defunct(message_bytes), private_key=self.private_key)
-        return signed.signature.hex()
+        signature = "0x" + signed.signature.hex()
+        # region agent log
+        debug_log(
+            RUN_ID,
+            "H1",
+            "ui_fastbridge_connect_test.py:sign_message",
+            "personal_sign signature shape",
+            {
+                "has0x": isinstance(signature, str) and signature.startswith("0x"),
+                "length": len(signature) if isinstance(signature, str) else None,
+                "vTail": signature[-2:] if isinstance(signature, str) and len(signature) >= 2 else None,
+            },
+        )
+        # endregion
+        return signature
 
     def sign_typed_data(self, typed_data: Any) -> str:
         payload = normalize_typed_data_payload(typed_data)
+        domain = payload.get("domain") if isinstance(payload, dict) else {}
+        chain_id = domain.get("chainId") if isinstance(domain, dict) else None
+        # region agent log
+        debug_log(
+            RUN_ID,
+            "H2",
+            "ui_fastbridge_connect_test.py:sign_typed_data",
+            "typed_data payload metadata",
+            {
+                "primaryType": payload.get("primaryType") if isinstance(payload, dict) else None,
+                "domainChainId": chain_id,
+                "domainChainIdType": type(chain_id).__name__ if chain_id is not None else None,
+                "hasMessage": isinstance(payload, dict) and "message" in payload,
+                "typesKeys": sorted((payload.get("types") or {}).keys()) if isinstance(payload, dict) else [],
+            },
+        )
+        # endregion
         signed = Account.sign_typed_data(self.private_key, full_message=payload)
-        return signed.signature.hex()
+        signature = "0x" + signed.signature.hex()
+        v_tail = signature[-2:] if isinstance(signature, str) and len(signature) >= 2 else ""
+        try:
+            v_decimal = int(v_tail, 16) if v_tail else None
+        except ValueError:
+            v_decimal = None
+        # region agent log
+        debug_log(
+            RUN_ID,
+            "H1",
+            "ui_fastbridge_connect_test.py:sign_typed_data",
+            "typed_data signature shape",
+            {
+                "has0x": isinstance(signature, str) and signature.startswith("0x"),
+                "length": len(signature) if isinstance(signature, str) else None,
+                "vTailHex": v_tail,
+                "vTailDecimal": v_decimal,
+            },
+        )
+        # endregion
+        return signature
 
     def send_transaction(self, tx: Dict[str, Any]) -> str:
         w3 = self.current_client()
@@ -404,6 +490,20 @@ class WalletHarness:
         method = payload.get("method")
         params = payload.get("params") or []
         self.provider_calls.append({"method": method, "params": params, "chainId": self.current_chain_id})
+        # region agent log
+        debug_log(
+            RUN_ID,
+            "H3",
+            "ui_fastbridge_connect_test.py:handler",
+            "wallet request received",
+            {
+                "method": method,
+                "paramCount": len(params),
+                "chainId": self.current_chain_id,
+                "dest": DEBUG_SERVER_ENDPOINT,
+            },
+        )
+        # endregion
 
         if method in ("eth_requestAccounts", "eth_accounts"):
             return [self.address]
@@ -413,6 +513,18 @@ class WalletHarness:
             return str(self.current_chain_id)
         if method == "wallet_switchEthereumChain":
             chain_hex = params[0]["chainId"]
+            # region agent log
+            debug_log(
+                RUN_ID,
+                "H5",
+                "ui_fastbridge_connect_test.py:handler",
+                "wallet_switchEthereumChain called",
+                {
+                    "requestedChainHex": chain_hex,
+                    "currentChainBefore": self.current_chain_id,
+                },
+            )
+            # endregion
             self.current_chain_id = int(chain_hex, 16)
             return {"chainId": chain_hex}
         if method == "wallet_addEthereumChain":
@@ -427,6 +539,20 @@ class WalletHarness:
             return self.sign_message(params[0])
         if method in {"eth_signTypedData", "eth_signTypedData_v3", "eth_signTypedData_v4"}:
             typed_data = params[-1]
+            # region agent log
+            debug_log(
+                RUN_ID,
+                "H4",
+                "ui_fastbridge_connect_test.py:handler",
+                "typed_data rpc invocation details",
+                {
+                    "method": method,
+                    "firstParamType": type(params[0]).__name__ if params else None,
+                    "lastParamType": type(typed_data).__name__,
+                    "addressParamLooksHex": isinstance(params[0], str) and params[0].startswith("0x") if params else None,
+                },
+            )
+            # endregion
             return self.sign_typed_data(typed_data)
         if method == "eth_sendTransaction":
             return self.send_transaction(params[0])
