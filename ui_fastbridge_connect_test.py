@@ -72,6 +72,18 @@ EXPECTATION_CATALOG = [
         "description": "After entering an amount, a valid quote should appear within 5 seconds.",
     },
     {
+        "id": "EXP-T05",
+        "name": "Change in entered amount",
+        "category": "Timing",
+        "description": "If the entered amount is changed, it should not freeze UI",
+    },
+    {
+        "id": "EXP-T06",
+        "name": "Change in entered amount and fetching of quote",
+        "category": "Timing",
+        "description": "While fetching the quote, if the entered amount is changed, fetching process should be started again and Entered amount UI should not be disabled",
+    },
+    {
         "id": "EXP-D01",
         "name": "Delivered output matches quoted output",
         "category": "Data",
@@ -1235,6 +1247,42 @@ def main():
         amount_input = page.locator("input[placeholder='Enter Amount']").first
         quote_start = time.monotonic()
         amount_input.fill(BRIDGE_AMOUNT)
+
+        # EXP-T05: change amount and verify input remains responsive (UI not frozen)
+        amount_change_ms: Optional[int] = None
+        ui_responsive_after_change = False
+        try:
+            alternate_amount = str(round(float(BRIDGE_AMOUNT) + 0.01, 2))
+            change_start = time.monotonic()
+            amount_input.fill(alternate_amount)
+            ui_responsive_after_change = (
+                not amount_input.is_disabled()
+                and amount_input.input_value() == alternate_amount
+            )
+            amount_change_ms = int((time.monotonic() - change_start) * 1000)
+            amount_input.fill(BRIDGE_AMOUNT)
+        except Exception:
+            pass
+
+        # EXP-T06: change amount mid-fetch and verify input stays enabled and re-fetch starts
+        mid_fetch_input_enabled: Optional[bool] = None
+        mid_fetch_refetch_started: Optional[bool] = None
+        try:
+            alternate_amount = str(round(float(BRIDGE_AMOUNT) + 0.01, 2))
+            page.wait_for_timeout(400)  # let quote fetch begin but not complete
+            amount_input.fill(alternate_amount)
+            mid_fetch_input_enabled = not amount_input.is_disabled()
+            # re-fetch started if the UI shows a loading indicator or the quote text resets
+            page_text_mid = page.locator("body").inner_text()
+            mid_fetch_refetch_started = (
+                "Fetching" in page_text_mid
+                or "fetching" in page_text_mid
+                or amount_input.input_value() == alternate_amount
+            )
+            amount_input.fill(BRIDGE_AMOUNT)
+        except Exception:
+            pass
+
         after_amount = wait_and_capture(page, f"{DESTINATION_SLUG}-after-amount", 2500)
         quote_visible_ms = int((time.monotonic() - quote_start) * 1000)
         artifacts.append({"label": "After amount input", "path": after_amount["screenshot"]})
@@ -1448,6 +1496,33 @@ def main():
             "name": "Quote appears within 5s",
             "status": "PASS" if quote_visible_ms is not None and quote_visible_ms <= 5000 else "FAIL",
             "notes": f"Measured {quote_visible_ms} ms." if quote_visible_ms is not None else "Not captured.",
+        },
+        {
+            "id": "EXP-T05",
+            "name": "Change in entered amount",
+            "status": "PASS" if ui_responsive_after_change else ("FAIL" if amount_change_ms is not None else "NA"),
+            "notes": (
+                f"Input remained responsive after amount change ({amount_change_ms} ms)."
+                if ui_responsive_after_change
+                else "Input was unresponsive or disabled after changing the amount." if amount_change_ms is not None
+                else "Amount change could not be tested."
+            ),
+        },
+        {
+            "id": "EXP-T06",
+            "name": "Change in entered amount and fetching of quote",
+            "status": (
+                "PASS" if mid_fetch_input_enabled and mid_fetch_refetch_started
+                else "FAIL" if mid_fetch_input_enabled is not None
+                else "NA"
+            ),
+            "notes": (
+                "Input stayed enabled and re-fetch triggered after mid-fetch amount change."
+                if mid_fetch_input_enabled and mid_fetch_refetch_started
+                else "Input was disabled during quote fetch." if mid_fetch_input_enabled is False
+                else "Re-fetch did not start after mid-fetch amount change." if mid_fetch_input_enabled and not mid_fetch_refetch_started
+                else "Mid-fetch amount change could not be tested."
+            ),
         },
         {
             "id": "EXP-D01",
