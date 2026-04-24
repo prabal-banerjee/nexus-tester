@@ -30,7 +30,6 @@ JSON_REPORT_PATH = REPORT_BUNDLE_DIR / "report.json"
 MD_REPORT_PATH = REPORT_BUNDLE_DIR / "report.md"
 HTML_REPORT_PATH = REPORT_BUNDLE_DIR / "index.html"
 EXPECTATIONS_HTML_PATH = REPORT_BUNDLE_DIR / "expectations.html"
-
 DESTINATION_SLUG = os.environ.get("FASTBRIDGE_DEST_SLUG", "base").strip().strip("/")
 BASE_URL = f"https://fastbridge.availproject.org/{DESTINATION_SLUG}/"
 BRIDGE_AMOUNT = os.environ.get("FASTBRIDGE_BRIDGE_AMOUNT", "0.1").strip()
@@ -327,12 +326,12 @@ class WalletHarness:
         else:
             message_bytes = message_hex.encode()
         signed = Account.sign_message(encode_defunct(message_bytes), private_key=self.private_key)
-        return signed.signature.hex()
+        return "0x" + signed.signature.hex()
 
     def sign_typed_data(self, typed_data: Any) -> str:
         payload = normalize_typed_data_payload(typed_data)
         signed = Account.sign_typed_data(self.private_key, full_message=payload)
-        return signed.signature.hex()
+        return "0x" + signed.signature.hex()
 
     def send_transaction(self, tx: Dict[str, Any]) -> str:
         w3 = self.current_client()
