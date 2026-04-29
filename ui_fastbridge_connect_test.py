@@ -326,12 +326,12 @@ class WalletHarness:
         else:
             message_bytes = message_hex.encode()
         signed = Account.sign_message(encode_defunct(message_bytes), private_key=self.private_key)
-        return "0x" + signed.signature.hex()
+        return signed.signature.to_0x_hex()
 
     def sign_typed_data(self, typed_data: Any) -> str:
         payload = normalize_typed_data_payload(typed_data)
         signed = Account.sign_typed_data(self.private_key, full_message=payload)
-        return "0x" + signed.signature.hex()
+        return signed.signature.to_0x_hex()
 
     def send_transaction(self, tx: Dict[str, Any]) -> str:
         w3 = self.current_client()
@@ -385,7 +385,7 @@ class WalletHarness:
             tx_payload["gasPrice"] = gas_price or w3.eth.gas_price
 
         signed = self.account.sign_transaction(tx_payload)
-        tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction).hex()
+        tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction).to_0x_hex()
         self.tx_log.append(
             {
                 "chainId": self.current_chain_id,
